@@ -9,15 +9,26 @@
   const VOICE = "aura-2-arcas-en";
   const ttsCache = new Map();
 
-  async function speak(text) {
-    if (!proxy() || !text) return null;
-    if (ttsCache.has(text)) return ttsCache.get(text);
+  async function synth(text) {
     const r = await fetch(proxy() + "/api/speak", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text, voice: VOICE }),
     });
     if (!r.ok) throw new Error("tts " + r.status);
-    const u = URL.createObjectURL(await r.blob());
+    return r.blob();
+  }
+  async function speak(text) {
+    if (!proxy() || !text) return null;
+    if (ttsCache.has(text)) return ttsCache.get(text);     // in-memory (this session)
+    const key = "https://tts.local/" + encodeURIComponent(VOICE + "|" + text);
+    let blob = null;
+    try {
+      const c = await caches.open("a320-tts-v1");           // persistent (survives reloads, offline)
+      let resp = await c.match(key);
+      if (!resp) { blob = await synth(text); await c.put(key, new Response(blob, { headers: { "Content-Type": "audio/wav" } })); }
+      else blob = await resp.blob();
+    } catch (e) { blob = await synth(text); }               // Cache API unavailable -> just synth
+    const u = URL.createObjectURL(blob);
     ttsCache.set(text, u);
     return u;
   }

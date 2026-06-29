@@ -96,13 +96,61 @@ function playUrl(url, fallbackText) {
     } catch (e) { ttsSpeak(fallbackText).then(res); }
   });
 }
+// ---- audio cache + preload (kill per-item latency) ----------------------
+const AUDIO_CACHE = "a320-audio-v1";
+const bundledMem = new Map();
+async function cachedBundled(url) {
+  if (bundledMem.has(url)) return bundledMem.get(url);
+  try {
+    const cache = await caches.open(AUDIO_CACHE);
+    let resp = await cache.match(url);
+    if (!resp) { const r = await fetch(url); if (!r.ok) return url; await cache.put(url, r.clone()); resp = r; }
+    const u = URL.createObjectURL(await resp.blob());
+    bundledMem.set(url, u);
+    return u;
+  } catch (e) { return url; }            // no Cache API -> direct URL (still HTTP-cached)
+}
+async function audioUrl(obj) {
+  if (!obj) return null;
+  if (obj.a) return cachedBundled("./audio/" + obj.a);   // bundled WAV (abnormals)
+  if (DG.hasProxy()) { try { const u = await DG.speak(obj.t); if (u) return u; } catch (e) {} }
+  return null;                            // -> device-voice fallback
+}
 async function speak(obj) {
   if (!obj || !obj.t) return;
-  if (obj.a) return playUrl("./audio/" + obj.a, obj.t);     // bundled premium (abnormals)
-  if (DG.hasProxy()) {                                       // live premium Aura (every other flow)
-    try { const u = await DG.speak(obj.t); if (u) return playUrl(u, obj.t); } catch (e) {}
+  const url = await audioUrl(obj);
+  if (url) return playUrl(url, obj.t);
+  return ttsSpeak(obj.t);
+}
+
+// Warm the cache for EVERY spoken line of a flow, in the background, so each
+// item is already buffered (and instant + offline) by the time you reach it.
+function collectLines(f, seat) {
+  const out = [], push = (o) => { if (o && (o.a || o.t)) out.push(o); };
+  push(f.sop_intro);
+  const items = (f.seats[seat] && f.seats[seat].items) || [];
+  for (const d of items) {
+    push(d.sop_intro); push(d.condition); push(d.prompt); push(d.reveal);
+    push(d.correct_line); push(d.explain); push(d.brief_line); push(d.narration);
   }
-  return ttsSpeak(obj.t);                                    // last resort: device voice
+  const seen = new Set(), uniq = [];
+  for (const o of out) { const k = o.a || o.t; if (!seen.has(k)) { seen.add(k); uniq.push(o); } }
+  return uniq;
+}
+let preloadToken = 0;
+async function preloadFlow(f, seat) {
+  const my = ++preloadToken;
+  const lines = collectLines(f, seat);
+  let i = 0, done = 0;
+  const worker = async () => {
+    while (i < lines.length && my === preloadToken) {
+      const obj = lines[i++];
+      try { await audioUrl(obj); } catch (e) {}
+      done++;
+      if (el.progress && S.mode) el.progress.title = `buffered ${done}/${lines.length}`;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(5, lines.length) }, worker));
 }
 function stopSpeak() {
   try { audioEl.pause(); } catch (e) {}
@@ -275,6 +323,7 @@ async function startDrill(key, seat, mode) {
   S.total = f.seats[seat].gradable;
   S.pendingIntro = f.sop_intro ? [f.sop_intro] : [];
   show("drill");
+  preloadFlow(f, seat);                              // background pre-buffer of all audio
   if (mode === "drill" && AUTO) await primeMic();   // one mic prompt up front, then hands-free
   showItem();
 }
