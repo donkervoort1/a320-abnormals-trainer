@@ -42,7 +42,10 @@
 
   <!-- DRILL -->
   <section id="screen-drill" class="screen" hidden>
-    <div id="subflow-bar"></div>
+    <div id="topline">
+      <div id="subflow-bar"></div>
+      <button id="master-warn" hidden>MASTER<br>WARN</button>
+    </div>
 
     <!-- ECAM E/WD panel (abnormal flows) -->
     <div id="ecam" hidden>
@@ -56,6 +59,8 @@
       <div id="cue-item"></div>
       <div id="cue-sub"></div>
     </div>
+
+    <div id="cockpit" hidden></div>
 
     <div id="answer-zone">
       <input id="answer" type="text" autocomplete="off" autocapitalize="characters"
@@ -87,6 +92,7 @@
   <script src="./matcher.js"></script>
   <script src="./config.js"></script>
   <script src="./dg.js"></script>
+  <script src="./cockpit.js"></script>
   <script src="./app.js"></script>
 </body>
 </html>

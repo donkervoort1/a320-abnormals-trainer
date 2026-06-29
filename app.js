@@ -10,6 +10,7 @@ const el = {
   btnMenu: $("btn-menu"), progress: $("progress"),
   subflowBar: $("subflow-bar"), cueCard: $("cue-card"), cueKind: $("cue-kind"), cueItem: $("cue-item"), cueSub: $("cue-sub"),
   ecam: $("ecam"), ecamTitle: $("ecam-title"), ecamLines: $("ecam-lines"), ecamCaption: $("ecam-caption"),
+  cockpit: $("cockpit"), masterWarn: $("master-warn"),
   answerZone: $("answer-zone"), answer: $("answer"), verdict: $("verdict"),
   revealCard: $("reveal-card"), revealAction: $("reveal-action"),
   revealCallout: $("reveal-callout"), revealWhy: $("reveal-why"), revealCite: $("reveal-cite"),
@@ -342,6 +343,10 @@ async function startDrill(key, seat, mode) {
   S.pendingIntro = f.sop_intro ? [f.sop_intro] : [];
   replayFn = () => startDrill(key, seat, mode);
   show("drill");
+  if (S.ecam) {                                      // ECAM: sound the chime + flash MASTER WARN
+    try { Cockpit.resume(); if (ecamIsRed(ecamTitle(f))) Cockpit.crcStart(); else Cockpit.singleChime(); } catch (e) {}
+    el.masterWarn.hidden = false; el.masterWarn.classList.add("active");
+  } else { el.masterWarn.hidden = true; el.masterWarn.classList.remove("active"); try { Cockpit.crcStop(); } catch (e) {} }
   preloadFlow(f, seat);                              // background pre-buffer of all audio
   if (mode === "drill" && AUTO) await primeMic();   // one mic prompt up front, then hands-free
   showItem();
@@ -447,6 +452,7 @@ function showItem() {
   if (S.i >= S.items.length) return finish();
   const d = S.items[S.i];
   S.attempts = 0;
+  S._done = false;
   hideReveal();
   el.verdict.textContent = ""; el.verdict.className = "";
   el.answer.value = "";
@@ -481,6 +487,17 @@ async function renderAsk(d, intro, gen) {
   ctrls.push({ label: "Explain", cls: "icon", on: () => explain(d) });
   ctrls.push({ label: "🔊 Replay", cls: "wide icon", on: () => { S.gen++; stopSpeak(); speakSeq([d.prompt], S.gen); } });
   setControls(ctrls);
+  if (S.ecam) {                                      // contextual switch for this ECAM step
+    el.cockpit.hidden = false; el.cockpit.innerHTML = "";
+    try {
+      el.cockpit.appendChild(Cockpit.controlFor(d.item, d.action, () => {
+        if (S.listening) abortListen();
+        try { Cockpit.crcStop(); } catch (e) {}
+        el.masterWarn.classList.remove("active");
+        markCorrect(d);
+      }));
+    } catch (e) { el.cockpit.hidden = true; }
+  } else { el.cockpit.hidden = true; el.cockpit.innerHTML = ""; }
   await speakSeq([...intro, d.prompt], gen);
   // hands-free: arm the mic once the item has been read (and nothing superseded it)
   if (AUTO && gen === S.gen && DG.hasProxy() && micStream) startListen(d);
@@ -502,6 +519,8 @@ function onSubmit() {
 }
 
 function markCorrect(d) {
+  if (S._done) return;            // guard double-fire (switch + voice both clearing one line)
+  S._done = true;
   S.correct++;
   el.verdict.textContent = S.ecam ? "✓ Actioned" : "Correct ✓";
   el.verdict.className = "good";
@@ -554,6 +573,7 @@ function explain(d) {
 
 async function renderTeach(d, intro, gen) {
   el.answerZone.hidden = true;
+  el.cockpit.hidden = true; el.cockpit.innerHTML = "";
   const kind = d.brief ? "Briefing" : (d.gradable ? "Review" : (d.callout ? "Callout" : "Note"));
   el.cueKind.textContent = kind;
   el.cueItem.textContent = d.item;
@@ -578,10 +598,15 @@ async function renderTeach(d, intro, gen) {
 
 function next() { S.i++; showItem(); }
 
+function silenceEcam() {
+  try { Cockpit.crcStop(); } catch (e) {}
+  el.masterWarn.hidden = true; el.masterWarn.classList.remove("active");
+}
 function finish() {
   abortListen();
   stopMic();
   stopSpeak();
+  silenceEcam();
   show("done");
   if (S.mode === "listen" || !S.total) {
     el.doneScore.textContent = "Review complete";
@@ -628,6 +653,7 @@ async function recallNext() {
   const f = R.flows[R.idx];
   hideReveal();
   el.ecam.hidden = true; el.cueCard.hidden = false;
+  el.cockpit.hidden = true; el.cockpit.innerHTML = "";
   el.answerZone.hidden = true;
   el.progress.textContent = `${R.idx + 1}/${R.flows.length}`;
   el.subflowBar.textContent = `Memory item ${R.idx + 1} of ${R.flows.length}`;
@@ -698,10 +724,11 @@ function bailToMenu() {
   abortListen();
   if (R && R.recCtl) { try { R.recCtl.stop(); } catch (e) {} R.recCtl = null; }
   R.gen = (R.gen || 0) + 1;     // invalidate any pending recall step
-  stopMic(); stopSpeak(); show("menu");
+  stopMic(); stopSpeak(); silenceEcam(); show("menu");
 }
 el.btnMenu.addEventListener("click", bailToMenu);
 el.btnBack.addEventListener("click", bailToMenu);
+el.masterWarn.addEventListener("click", () => { try { Cockpit.crcStop(); } catch (e) {} el.masterWarn.classList.remove("active"); });
 el.btnAgain.addEventListener("click", () => { if (replayFn) replayFn(); });
 const btnRecall = document.getElementById("btn-recall");
 if (btnRecall) btnRecall.addEventListener("click", startRecallExam);
