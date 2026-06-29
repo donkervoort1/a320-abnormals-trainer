@@ -25,6 +25,25 @@ const MAX_RETRIES = 1;
 const audioEl = new Audio();
 audioEl.preload = "auto";
 let pickedVoice = null;
+
+// iOS unlocks media + speech only inside a user gesture. Play a silent blip on
+// the first flow tap so later programmatic plays (incl. live Deepgram TTS on a
+// flow with no bundled audio) are allowed.
+const SILENT_WAV = "data:audio/wav;base64,UklGRiQCAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQACAAAA" + "A".repeat(682) + "==";
+let audioUnlocked = false;
+function unlockAudio() {
+  if (audioUnlocked) return;
+  audioUnlocked = true;
+  try {
+    audioEl.muted = true;
+    audioEl.src = SILENT_WAV;
+    const p = audioEl.play();
+    const fin = () => { try { audioEl.pause(); } catch (e) {} audioEl.muted = false; };
+    if (p && p.then) p.then(fin).catch(() => { audioEl.muted = false; });
+    else fin();
+  } catch (e) { audioEl.muted = false; }
+  try { if ("speechSynthesis" in window) { const u = new SpeechSynthesisUtterance(" "); u.volume = 0; speechSynthesis.speak(u); } } catch (e) {}
+}
 function loadVoices() {
   if (!("speechSynthesis" in window)) return;
   const vs = speechSynthesis.getVoices() || [];
@@ -45,21 +64,24 @@ function ttsSpeak(t) {
     } catch (e) { res(); }
   });
 }
-function speak(obj) {
+function playUrl(url, fallbackText) {
   return new Promise((res) => {
-    if (!obj || !obj.t) return res();
-    if (obj.a) {
-      audioEl.onended = () => res();
-      audioEl.onerror = () => ttsSpeak(obj.t).then(res);
-      try {
-        audioEl.src = "./audio/" + obj.a;
-        const p = audioEl.play();
-        if (p && p.catch) p.catch(() => ttsSpeak(obj.t).then(res));
-      } catch (e) { ttsSpeak(obj.t).then(res); }
-    } else {
-      ttsSpeak(obj.t).then(res);
-    }
+    audioEl.onended = () => res();
+    audioEl.onerror = () => ttsSpeak(fallbackText).then(res);
+    try {
+      audioEl.src = url;
+      const p = audioEl.play();
+      if (p && p.catch) p.catch(() => ttsSpeak(fallbackText).then(res));
+    } catch (e) { ttsSpeak(fallbackText).then(res); }
   });
+}
+async function speak(obj) {
+  if (!obj || !obj.t) return;
+  if (obj.a) return playUrl("./audio/" + obj.a, obj.t);     // bundled premium (abnormals)
+  if (DG.hasProxy()) {                                       // live premium Aura (every other flow)
+    try { const u = await DG.speak(obj.t); if (u) return playUrl(u, obj.t); } catch (e) {}
+  }
+  return ttsSpeak(obj.t);                                    // last resort: device voice
 }
 function stopSpeak() {
   try { audioEl.pause(); } catch (e) {}
@@ -72,11 +94,63 @@ async function speakSeq(list, gen) {
   }
 }
 
-// ---- speech recognition (iOS Safari Web Speech API; free, no key) -------
+// ---- speech recognition -------------------------------------------------
+// Aviation keyterm bias for Deepgram (mirrors stt_deepgram._KEYTERMS + abnormal vocab).
+const KEYTERMS = [
+  "QNH", "flight level", "altitude", "heading", "standard", "transition",
+  "V1", "VR", "V2", "VREF", "VAPP", "green dot", "FLEX", "TOGA",
+  "thrust idle", "climb thrust", "flaps", "gear up", "gear down", "speedbrake",
+  "autobrake", "parking brake", "pull", "push", "managed", "selected",
+  "approach", "localizer", "glideslope", "go around", "SRS", "MAN FLEX", "MAN TOGA",
+  "ECAM", "FMA", "FCU", "MCDU", "PFD", "ND", "autopilot", "autothrust",
+  "flight director", "anti ice", "packs", "bleed", "APU", "beacon", "strobe",
+  "ignition", "TCAS", "transponder", "squawk", "radar", "checked", "rotate",
+  "positive climb", "set", "cross check", "displayed", "stow", "reset",
+  "reverse", "max reverse", "anti skid", "release", "PSI", "pull up", "windshear",
+  "stall", "I have control", "MCT", "emergency descent", "unreliable speed", "terrain",
+  // abnormal vocab
+  "idle", "engine master", "engine fire pushbutton", "agent", "agent 1", "agent 2",
+  "discharge", "shut down", "do not restart", "notify ATC", "cabin crew", "alert",
+  "emergency evacuation", "evacuate", "land as soon as possible", "thrust lever",
+  "hydraulic", "blue", "green", "yellow", "RAT", "status", "QRH", "confirm", "clear",
+];
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const micAvail = !!SR;
+const voiceInAvail = () => DG.hasProxy() || micAvail;
 let recognizer = null;
+
 function startListen(d) {
+  if (S.listening) { if (S.recCtl) { S.recCtl.stop(); } return; }   // tap again = stop
+  stopSpeak();
+  if (DG.hasProxy()) return dgListen(d);
+  return webSpeechListen(d);
+}
+
+async function dgListen(d) {
+  S.listening = true; S.recCtl = null;
+  el.verdict.textContent = "🎤 Listening… say the action (tap 🎤 to stop)";
+  el.verdict.className = "listening";
+  try {
+    const txt = await DG.listen({
+      keyterms: KEYTERMS,
+      onPartial: (t) => { el.answer.value = t; },
+      register: (c) => { S.recCtl = c; },
+      maxMs: 9000,
+    });
+    S.listening = false; S.recCtl = null;
+    if (!txt) { el.verdict.textContent = "Didn't catch that — tap 🎤 again, or type."; el.verdict.className = "bad"; return; }
+    el.answer.value = txt;
+    onSubmit();
+  } catch (e) {
+    S.listening = false; S.recCtl = null;
+    el.verdict.textContent = /denied|notallowed|permission/i.test(String(e))
+      ? "Mic blocked — allow the microphone for this site in Safari, then tap 🎤."
+      : "Voice unavailable — type instead, or tap 🎤 to retry.";
+    el.verdict.className = "bad";
+  }
+}
+
+function webSpeechListen(d) {
   if (!SR) { onSubmit(); return; }
   if (S.listening) return;
   stopSpeak();                       // free the mic from any TTS playback
@@ -157,6 +231,7 @@ function renderMenu() {
 function startDrill(key, seat, mode) {
   const f = DATA.flows.find(x => x.key === key);
   if (!f || !f.seats[seat]) return;
+  unlockAudio();
   resetState();
   S.flow = f; S.seat = seat; S.mode = mode;
   S.items = f.seats[seat].items;
@@ -228,14 +303,15 @@ function showItem() {
 
 function renderAsk(d, intro, gen) {
   el.answerZone.hidden = false;
-  el.cueKind.textContent = micAvail
+  const v = voiceInAvail();
+  el.cueKind.textContent = v
     ? "Your call — tap 🎤 and say the action (or type)"
     : "Your call — say it aloud, then type";
   el.cueItem.textContent = d.item;
   el.cueSub.textContent = "";
   const ctrls = [];
-  if (micAvail) ctrls.push({ label: "🎤 Speak answer", cls: "primary wide", on: () => startListen(d) });
-  ctrls.push({ label: micAvail ? "Submit typed" : "Submit", cls: micAvail ? "" : "primary wide", on: onSubmit });
+  if (v) ctrls.push({ label: "🎤 Speak answer", cls: "primary wide", on: () => startListen(d) });
+  ctrls.push({ label: v ? "Submit typed" : "Submit", cls: v ? "" : "primary wide", on: onSubmit });
   ctrls.push({ label: "Reveal", on: () => revealSelfMark(d) });
   ctrls.push({ label: "Skip", on: () => skip(d) });
   ctrls.push({ label: "Explain", cls: "icon", on: () => explain(d) });
