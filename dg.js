@@ -50,7 +50,7 @@
     let stream = opts.stream, ownStream = false;
     if (!stream) {
       stream = await navigator.mediaDevices.getUserMedia({
-        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: false } });
       ownStream = true;
     }
     const wsBase = proxy().replace(/^http/i, "ws");   // stream through the Worker relay
@@ -81,11 +81,36 @@
       if (opts.register) opts.register({ stop: () => done(transcript) });
       timer = setTimeout(() => done(transcript), opts.maxMs || 9000);
 
+      // --- adaptive noise gate (VAD) ---------------------------------------
+      // Only stream audio while you're actually speaking; send silence otherwise,
+      // so steady background noise never reaches Deepgram (no junk transcripts,
+      // clean utterance-end). Threshold adapts to the room's noise floor.
+      const G = root.DG_GATE || {};
+      const ABS_MIN = G.absMin != null ? G.absMin : 0.010;   // hard floor for "speech"
+      const OPEN_RATIO = G.ratio != null ? G.ratio : 2.2;    // speech must beat noiseFloor * this
+      const HANG_MS = G.hangoverMs != null ? G.hangoverMs : 600; // keep open after last voiced
+      const FLOOR_CAP = G.floorCap != null ? G.floorCap : 0.05;
+      const WIN = G.win != null ? G.win : 14;                // noise-floor window (~1.2s)
+      const ring = new Array(WIN).fill(0.010); let ri = 0, filled = 0;
+      let voiced = false, lastVoiced = 0;
+      const nowMs = () => (root.performance && performance.now ? performance.now() : Date.now());
       ws.onopen = () => {
         srcNode.connect(proc); proc.connect(ac.destination);
         proc.onaudioprocess = (e) => {
           if (finished || ws.readyState !== 1) return;
-          ws.send(floatTo16(downsample(e.inputBuffer.getChannelData(0), inRate, 16000)));
+          const input = e.inputBuffer.getChannelData(0);
+          let s = 0; for (let i = 0; i < input.length; i++) s += input[i] * input[i];
+          const r = Math.sqrt(s / input.length);
+          // noise floor = recent MINIMUM RMS (the quiet gaps), robust to loud rooms
+          ring[ri] = r; ri = (ri + 1) % WIN; if (filled < WIN) filled++;
+          let mn = Infinity; for (let i = 0; i < filled; i++) if (ring[i] < mn) mn = ring[i];
+          const thr = Math.max(ABS_MIN, Math.min(FLOOR_CAP, mn) * OPEN_RATIO);
+          const now = nowMs();
+          if (r > thr) { voiced = true; lastVoiced = now; }
+          else if (now - lastVoiced > HANG_MS) voiced = false;
+          const down = downsample(input, inRate, 16000);
+          if (!voiced) down.fill(0);                      // gate closed -> send silence
+          ws.send(floatTo16(down));
         };
       };
       ws.onmessage = (ev) => {

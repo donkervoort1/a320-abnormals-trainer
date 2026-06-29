@@ -58,7 +58,7 @@ async function primeMic() {
   if (!DG.hasProxy() || micStream) return;
   try {
     micStream = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: false } });
   } catch (e) { micStream = null; }   // denied -> manual 🎤 button still works
 }
 function stopMic() {
