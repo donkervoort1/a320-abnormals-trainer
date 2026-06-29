@@ -74,7 +74,8 @@
     const srcNode = ac.createMediaStreamSource(stream);
     const proc = ac.createScriptProcessor(4096, 1, 1);
     const inRate = ac.sampleRate;
-    let transcript = "", finished = false, resolved = false, timer = null;
+    let transcript = "", finished = false, resolved = false, timer = null, silTimer = null, lastText = 0, started = false;
+    const nowMs = () => (root.performance && performance.now ? performance.now() : Date.now());
 
     function cleanup() {
       if (finished) return; finished = true;
@@ -85,12 +86,17 @@
       try { if (ws.readyState === 1) ws.send(JSON.stringify({ type: "CloseStream" })); } catch (e) {}
       try { ws.close(); } catch (e) {}
       if (timer) clearTimeout(timer);
+      if (silTimer) clearInterval(silTimer);
     }
 
     return new Promise((resolve, reject) => {
       const done = (t) => { if (resolved) return; resolved = true; cleanup(); resolve((t || "").trim()); };
       if (opts.register) opts.register({ stop: () => done(transcript) });
-      timer = setTimeout(() => done(transcript), opts.maxMs || 9000);
+      timer = setTimeout(() => done(transcript), opts.maxMs || (opts.continuous ? 40000 : 9000));
+      if (opts.continuous) {           // free-recall: finalize after a long pause, not the first gap
+        const silenceMs = opts.silenceMs || 4000;
+        silTimer = setInterval(() => { if (started && nowMs() - lastText > silenceMs) done(transcript); }, 250);
+      }
 
       // --- adaptive noise gate (VAD) ---------------------------------------
       // Only stream audio while you're actually speaking; send silence otherwise,
@@ -104,7 +110,6 @@
       const WIN = G.win != null ? G.win : 14;                // noise-floor window (~1.2s)
       const ring = new Array(WIN).fill(0.010); let ri = 0, filled = 0;
       let voiced = false, lastVoiced = 0;
-      const nowMs = () => (root.performance && performance.now ? performance.now() : Date.now());
       ws.onopen = () => {
         srcNode.connect(proc); proc.connect(ac.destination);
         proc.onaudioprocess = (e) => {
@@ -128,9 +133,10 @@
         let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
         const alt = m.channel && m.channel.alternatives && m.channel.alternatives[0];
         const txt = alt && alt.transcript ? alt.transcript : "";
-        if (txt && opts.onPartial) opts.onPartial(txt);
-        if (txt && m.is_final) transcript = (transcript + " " + txt).trim();
-        if (m.speech_final) done(transcript);
+        if (txt) { lastText = nowMs(); started = true; }
+        if (txt && m.is_final) { transcript = (transcript + " " + txt).trim(); if (opts.onPartial) opts.onPartial(transcript); }
+        else if (txt && opts.onPartial) opts.onPartial((transcript + " " + txt).trim());
+        if (m.speech_final && !opts.continuous) done(transcript);
       };
       ws.onerror = () => { if (!resolved) { cleanup(); reject(new Error("ws error")); } };
       ws.onclose = () => { if (!resolved) done(transcript); };

@@ -34,6 +34,7 @@ let audioUnlocked = false;
 let audioCtx = null;          // shared AudioContext (resumed in-gesture, reused for STT)
 let micStream = null;         // shared mic stream for the whole drill (hands-free loop)
 const AUTO = true;            // auto-arm mic after each prompt + auto-advance after grading
+let R = {}, replayFn = null;  // memory-item recall exam state + "run again" dispatcher
 function unlockAudio() {
   if (audioUnlocked) return;
   audioUnlocked = true;
@@ -322,6 +323,7 @@ async function startDrill(key, seat, mode) {
   S.items = f.seats[seat].items;
   S.total = f.seats[seat].gradable;
   S.pendingIntro = f.sop_intro ? [f.sop_intro] : [];
+  replayFn = () => startDrill(key, seat, mode);
   show("drill");
   preloadFlow(f, seat);                              // background pre-buffer of all audio
   if (mode === "drill" && AUTO) await primeMic();   // one mic prompt up front, then hands-free
@@ -524,11 +526,104 @@ function finish() {
   }
 }
 
+// ---- memory-item free-recall exam ---------------------------------------
+// Recite each memory item's whole sequence from memory, back-to-back, no
+// teaching, no per-item feedback; coverage scored against the action list at the end.
+function memName(f) { return f.name.replace(/\s*\(memory item\)\s*$/i, "").trim(); }
+async function startRecallExam() {
+  unlockAudio();
+  const flows = DATA.flows.filter(f => f.key.indexOf("mem_") === 0 && f.seats.pf && f.seats.pf.gradable);
+  if (!flows.length) return;
+  R = { flows, idx: 0, results: [], seat: "pf", recCtl: null, gen: 0 };
+  replayFn = startRecallExam;
+  resetState(); S.mode = "recall";
+  show("drill");
+  el.answerZone.hidden = true;
+  await primeMic();
+  recallNext();
+}
+async function recallNext() {
+  if (R.idx >= R.flows.length) return finishRecall();
+  const gen = ++R.gen;
+  const f = R.flows[R.idx];
+  hideReveal();
+  el.answerZone.hidden = true;
+  el.progress.textContent = `${R.idx + 1}/${R.flows.length}`;
+  el.subflowBar.textContent = `Memory item ${R.idx + 1} of ${R.flows.length}`;
+  el.cueKind.textContent = "Recite the whole memory item from memory";
+  el.cueItem.textContent = memName(f);
+  el.cueSub.textContent = "";
+  el.verdict.textContent = ""; el.verdict.className = "";
+  setControls([
+    { label: "✓ Done — next item", cls: "primary wide", on: () => { if (R.recCtl) R.recCtl.stop(); } },
+    { label: "Skip", on: () => { if (gen !== R.gen) return; if (R.recCtl) { try { R.recCtl.stop(); } catch (e) {} R.recCtl = null; } advanceRecall(gen, "skip", ""); } },
+  ]);
+  stopSpeak();
+  await speak({ t: memName(f) + ". Recite." });
+  if (gen !== R.gen) return;        // skipped during the announce
+  recallListen(gen);
+}
+async function recallListen(gen) {
+  el.verdict.textContent = "🎤 Reciting… say the full sequence, then tap Done";
+  el.verdict.className = "listening";
+  try {
+    const txt = await DG.listen({
+      keyterms: KEYTERMS, stream: micStream || undefined, audioContext: audioCtx || undefined,
+      continuous: true, silenceMs: 4000, maxMs: 45000,
+      onPartial: (t) => { if (gen === R.gen) el.cueSub.textContent = t; },
+      register: (c) => { R.recCtl = c; },
+    });
+    if (gen !== R.gen) return;
+    R.recCtl = null; advanceRecall(gen, "graded", txt);
+  } catch (e) { if (gen !== R.gen) return; R.recCtl = null; advanceRecall(gen, "graded", ""); }
+}
+function advanceRecall(gen, kind, transcript) {
+  if (gen !== R.gen) return;        // already advanced / superseded
+  R.gen++;                          // invalidate this item so nothing double-fires
+  const f = R.flows[R.idx];
+  const items = ((f.seats[R.seat] && f.seats[R.seat].items) || []).filter(d => d.gradable);
+  let hit = 0; const missed = [];
+  for (const d of items) {
+    if (kind === "graded" && transcript && Matcher.matchAnswer(transcript, d.action).ok) hit++;
+    else missed.push(`${d.item} — ${d.action}`);
+  }
+  R.results.push({ name: memName(f), hit, total: items.length, missed });
+  R.idx++;
+  recallNext();
+}
+function finishRecall() {
+  if (R.recCtl) { try { R.recCtl.stop(); } catch (e) {} R.recCtl = null; }
+  stopMic(); stopSpeak();
+  show("done");
+  const hit = R.results.reduce((a, r) => a + r.hit, 0);
+  const tot = R.results.reduce((a, r) => a + r.total, 0);
+  const pct = tot ? Math.round(100 * hit / tot) : 0;
+  el.doneScore.textContent = `${hit} / ${tot}`;
+  el.donePct.textContent = `${pct}% — memory items recalled`;
+  let html = "<h4>Per memory item</h4>";
+  for (const r of R.results) {
+    const ip = r.total ? Math.round(100 * r.hit / r.total) : 0;
+    const col = ip >= 100 ? "var(--good)" : (ip >= 60 ? "var(--amber)" : "var(--bad)");
+    html += `<div style="margin:10px 0"><b>${r.name}</b> — <span style="color:${col}">${r.hit}/${r.total} (${ip}%)</span>`;
+    if (r.missed.length) html += `<br><span style="color:var(--dim)">missed: ${r.missed.join("; ")}</span>`;
+    html += "</div>";
+  }
+  el.doneMissed.innerHTML = html;
+}
+
 // ---- wiring -------------------------------------------------------------
 el.answer.addEventListener("keydown", (e) => { if (e.key === "Enter") onSubmit(); });
-el.btnMenu.addEventListener("click", () => { abortListen(); stopMic(); stopSpeak(); show("menu"); });
-el.btnBack.addEventListener("click", () => { abortListen(); stopMic(); stopSpeak(); show("menu"); });
-el.btnAgain.addEventListener("click", () => startDrill(S.flow.key, S.seat, S.mode));
+function bailToMenu() {
+  abortListen();
+  if (R && R.recCtl) { try { R.recCtl.stop(); } catch (e) {} R.recCtl = null; }
+  R.gen = (R.gen || 0) + 1;     // invalidate any pending recall step
+  stopMic(); stopSpeak(); show("menu");
+}
+el.btnMenu.addEventListener("click", bailToMenu);
+el.btnBack.addEventListener("click", bailToMenu);
+el.btnAgain.addEventListener("click", () => { if (replayFn) replayFn(); });
+const btnRecall = document.getElementById("btn-recall");
+if (btnRecall) btnRecall.addEventListener("click", startRecallExam);
 el.modeToggle.querySelectorAll("button").forEach(b => {
   b.addEventListener("click", () => {
     MODE = b.dataset.mode;
