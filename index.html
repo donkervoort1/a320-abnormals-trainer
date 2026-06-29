@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+  <title>A320 Abnormals Trainer</title>
+  <meta name="theme-color" content="#0b0f14" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="A320 ABN" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="./icon-180.png" />
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <header id="topbar">
+    <button id="btn-menu" class="ghost" hidden>&larr; Flows</button>
+    <div id="title">A320 <span>Abnormals Trainer</span></div>
+    <div id="progress"></div>
+  </header>
+
+  <!-- MENU -->
+  <section id="screen-menu" class="screen">
+    <div class="mode-row">
+      <span class="mode-label">Mode</span>
+      <div class="segmented" id="mode-toggle">
+        <button data-mode="drill" class="active">Drill</button>
+        <button data-mode="listen">Listen</button>
+      </div>
+    </div>
+    <p class="hint" id="mode-hint">Drill: I say the item, you say the action out loud, then type it (or tap Reveal) to grade.</p>
+    <h2 class="group-title">Abnormals</h2>
+    <div id="list-abn" class="cards"></div>
+    <h2 class="group-title">All other flows</h2>
+    <div id="list-rest" class="cards"></div>
+    <footer class="foot">Built from your TUTORIAL FLOWS &middot; premium voice on abnormals, device voice elsewhere.</footer>
+  </section>
+
+  <!-- DRILL -->
+  <section id="screen-drill" class="screen" hidden>
+    <div id="subflow-bar"></div>
+    <div id="cue-card">
+      <div id="cue-kind"></div>
+      <div id="cue-item"></div>
+      <div id="cue-sub"></div>
+    </div>
+
+    <div id="answer-zone">
+      <input id="answer" type="text" autocomplete="off" autocapitalize="characters"
+             autocorrect="off" spellcheck="false" placeholder="type the action&hellip;" />
+      <div id="verdict"></div>
+    </div>
+
+    <div id="reveal-card" hidden>
+      <div class="reveal-action" id="reveal-action"></div>
+      <div class="reveal-callout" id="reveal-callout"></div>
+      <div class="reveal-why" id="reveal-why"></div>
+      <div class="reveal-cite" id="reveal-cite"></div>
+    </div>
+
+    <div id="controls"></div>
+  </section>
+
+  <!-- DONE -->
+  <section id="screen-done" class="screen" hidden>
+    <div id="done-score"></div>
+    <div id="done-pct"></div>
+    <div id="done-missed"></div>
+    <div class="done-btns">
+      <button id="btn-again" class="primary">Run again</button>
+      <button id="btn-back" class="ghost">Back to flows</button>
+    </div>
+  </section>
+
+  <script src="./matcher.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
