@@ -6,7 +6,7 @@
 const $ = (id) => document.getElementById(id);
 const el = {
   menu: $("screen-menu"), drill: $("screen-drill"), done: $("screen-done"),
-  listAbn: $("list-abn"), listRest: $("list-rest"),
+  listAbn: $("list-abn"), listRest: $("list-rest"), listMem: $("list-mem"),
   btnMenu: $("btn-menu"), progress: $("progress"),
   subflowBar: $("subflow-bar"), cueKind: $("cue-kind"), cueItem: $("cue-item"), cueSub: $("cue-sub"),
   answerZone: $("answer-zone"), answer: $("answer"), verdict: $("verdict"),
@@ -308,9 +308,24 @@ function flowCard(f) {
   });
   return card;
 }
+function memCard(f) {
+  const card = document.createElement("div");
+  card.className = "card mem";
+  card.innerHTML =
+    `<div class="card-top"><span class="card-name">${memName(f)}</span><span class="badge memb">MEMORY</span></div>`
+    + `<div class="seat-btns"><button class="recite-b">🎤 Recite end-to-end</button>`
+    + `<button class="drill-b">Drill actions</button></div>`;
+  card.querySelector(".recite-b").addEventListener("click", () => startRecallOne(f.key));
+  card.querySelector(".drill-b").addEventListener("click", () => startDrill(f.key, "pf", "drill"));
+  return card;
+}
 function renderMenu() {
-  el.listAbn.innerHTML = ""; el.listRest.innerHTML = "";
-  DATA.flows.forEach(f => (f.abnormal ? el.listAbn : el.listRest).appendChild(flowCard(f)));
+  el.listAbn.innerHTML = ""; el.listRest.innerHTML = ""; if (el.listMem) el.listMem.innerHTML = "";
+  DATA.flows.forEach(f => {
+    if (f.key.indexOf("mem_") === 0) { if (el.listMem) el.listMem.appendChild(memCard(f)); }
+    else if (f.abnormal) el.listAbn.appendChild(flowCard(f));
+    else el.listRest.appendChild(flowCard(f));
+  });
 }
 
 // ---- drill --------------------------------------------------------------
@@ -530,17 +545,23 @@ function finish() {
 // Recite each memory item's whole sequence from memory, back-to-back, no
 // teaching, no per-item feedback; coverage scored against the action list at the end.
 function memName(f) { return f.name.replace(/\s*\(memory item\)\s*$/i, "").trim(); }
-async function startRecallExam() {
+async function startRecall(flows) {
+  if (!flows || !flows.length) return;
   unlockAudio();
-  const flows = DATA.flows.filter(f => f.key.indexOf("mem_") === 0 && f.seats.pf && f.seats.pf.gradable);
-  if (!flows.length) return;
   R = { flows, idx: 0, results: [], seat: "pf", recCtl: null, gen: 0 };
-  replayFn = startRecallExam;
+  replayFn = () => startRecall(flows);
   resetState(); S.mode = "recall";
   show("drill");
   el.answerZone.hidden = true;
   await primeMic();
   recallNext();
+}
+function startRecallExam() {
+  return startRecall(DATA.flows.filter(f => f.key.indexOf("mem_") === 0 && f.seats.pf && f.seats.pf.gradable));
+}
+function startRecallOne(key) {
+  const f = DATA.flows.find(x => x.key === key);
+  if (f && f.seats.pf && f.seats.pf.gradable) return startRecall([f]);
 }
 async function recallNext() {
   if (R.idx >= R.flows.length) return finishRecall();

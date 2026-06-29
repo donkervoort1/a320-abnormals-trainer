@@ -45,6 +45,9 @@ input{font-family:inherit}
 .badge{font-size:11px; padding:2px 8px; border-radius:20px; font-weight:700; letter-spacing:.5px}
 .badge.audio{background:rgba(61,169,252,.15); color:var(--accent)}
 .badge.abnb{background:rgba(251,113,133,.15); color:var(--bad)}
+.badge.memb{background:rgba(124,58,237,.18); color:#a78bfa}
+.card.mem{border-color:#2c2747}
+.seat-btns .recite-b{background:linear-gradient(135deg,#7c3aed,#3da9fc); color:#04121f; border-color:transparent}
 .card-src{color:var(--dim); font-size:12px; margin:2px 0 12px}
 .seat-btns{display:flex; gap:10px; flex-wrap:wrap}
 .seat-btns button{background:var(--panel2); border:1px solid var(--line); border-radius:11px; padding:10px 16px; font-weight:700; font-size:15px}
