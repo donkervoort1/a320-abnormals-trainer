@@ -8,7 +8,8 @@ const el = {
   menu: $("screen-menu"), drill: $("screen-drill"), done: $("screen-done"),
   listAbn: $("list-abn"), listRest: $("list-rest"), listMem: $("list-mem"),
   btnMenu: $("btn-menu"), progress: $("progress"),
-  subflowBar: $("subflow-bar"), cueKind: $("cue-kind"), cueItem: $("cue-item"), cueSub: $("cue-sub"),
+  subflowBar: $("subflow-bar"), cueCard: $("cue-card"), cueKind: $("cue-kind"), cueItem: $("cue-item"), cueSub: $("cue-sub"),
+  ecam: $("ecam"), ecamTitle: $("ecam-title"), ecamLines: $("ecam-lines"), ecamCaption: $("ecam-caption"),
   answerZone: $("answer-zone"), answer: $("answer"), verdict: $("verdict"),
   revealCard: $("reveal-card"), revealAction: $("reveal-action"),
   revealCallout: $("reveal-callout"), revealWhy: $("reveal-why"), revealCite: $("reveal-cite"),
@@ -335,6 +336,7 @@ async function startDrill(key, seat, mode) {
   unlockAudio();
   resetState();
   S.flow = f; S.seat = seat; S.mode = mode;
+  S.ecam = !!f.abnormal;                             // abnormal flows render as ECAM read-and-do
   S.items = f.seats[seat].items;
   S.total = f.seats[seat].gradable;
   S.pendingIntro = f.sop_intro ? [f.sop_intro] : [];
@@ -387,6 +389,59 @@ function introLinesFor(d) {
   return lines;
 }
 
+// ---- ECAM E/WD rendering (abnormal flows) -------------------------------
+function ecamTitle(f) {
+  const m = (f.name || "").match(/\(([^)]+)\)/);
+  return (m ? m[1] : (f.name || "")).toUpperCase();
+}
+function ecamIsRed(title) {
+  return /FIRE|SMOKE|STALL|EMER|PULL\s*UP|WINDSHEAR|EVAC|UNRELIABLE|DUAL ENG|ALL ENG/i.test(title);
+}
+function ecamLabel(item) {
+  return (item || "").replace(/^(the|affected)\s+/i, "").toUpperCase();
+}
+function renderEcam(d) {
+  const title = ecamTitle(S.flow);
+  el.ecamTitle.textContent = title;
+  el.ecamTitle.className = ecamIsRed(title) ? "" : "caution";
+  const lines = [];
+  for (let k = 0; k < S.items.length; k++) {
+    const x = S.items[k];
+    if (x.subflow === d.subflow && x.gradable) lines.push({ x, k });
+  }
+  el.ecamLines.innerHTML = "";
+  if (lines.length) {
+    for (const ln of lines) {
+      const st = ln.k < S.i ? "done" : (ln.k === S.i ? "cur" : "pending");
+      const row = document.createElement("div");
+      row.className = "ecam-line " + st;
+      const act = (st === "done" ? "✓ " : "") + (ln.x.action || "").toUpperCase();
+      row.innerHTML = `<span class="ecl-label">${ecamLabel(ln.x.item)}</span>`
+        + `<span class="ecl-dots"></span><span class="ecl-act">${act}</span>`;
+      el.ecamLines.appendChild(row);
+    }
+  } else {
+    const info = document.createElement("div");
+    info.className = "ecam-info";
+    info.textContent = d.item + (d.action ? " — " + d.action : "");
+    el.ecamLines.appendChild(info);
+  }
+  let cap = "";
+  if (d.callout) cap += `<div class="ecl-call">${d.callout}</div>`;
+  const why = d.why || d.why_full;
+  if (why) cap += `<div class="ecl-why">${why}</div>`;
+  el.ecamCaption.innerHTML = cap;
+  el.revealCard.hidden = true;          // ECAM panel + caption replace the reveal card
+}
+function ecamMarkCurDone() {
+  const cur = el.ecamLines.querySelector(".ecam-line.cur");
+  if (!cur) return;
+  cur.classList.remove("cur"); cur.classList.add("done");
+  const act = cur.querySelector(".ecl-act");
+  if (act && act.textContent.indexOf("✓") !== 0) act.textContent = "✓ " + act.textContent;
+}
+function maybeReveal(d) { if (!S.ecam) showReveal(d); }   // ECAM shows everything in the panel
+
 function showItem() {
   abortListen();
   if (S.i >= S.items.length) return finish();
@@ -400,6 +455,9 @@ function showItem() {
   const gen = S.gen;
   stopSpeak();
   updateProgress();
+
+  if (S.ecam) { el.ecam.hidden = false; el.cueCard.hidden = true; renderEcam(d); }
+  else { el.ecam.hidden = true; el.cueCard.hidden = false; }
 
   const ask = S.mode === "drill" && d.gradable;
   if (ask) renderAsk(d, intro, gen);
@@ -415,9 +473,10 @@ async function renderAsk(d, intro, gen) {
   el.cueItem.textContent = d.item;
   el.cueSub.textContent = "";
   const ctrls = [];
-  if (v) ctrls.push({ label: "🎤 Speak answer", cls: "primary wide", on: () => startListen(d) });
+  if (v) ctrls.push({ label: S.ecam ? "🎤 Make the call" : "🎤 Speak answer", cls: "primary wide", on: () => startListen(d) });
   ctrls.push({ label: v ? "Submit typed" : "Submit", cls: v ? "" : "primary wide", on: onSubmit });
-  ctrls.push({ label: "Reveal", on: () => revealSelfMark(d) });
+  if (S.ecam) ctrls.push({ label: "✓ Confirm", cls: "good", on: () => markCorrect(d) });   // actioned without voice
+  else ctrls.push({ label: "Reveal", on: () => revealSelfMark(d) });
   ctrls.push({ label: "Skip", on: () => skip(d) });
   ctrls.push({ label: "Explain", cls: "icon", on: () => explain(d) });
   ctrls.push({ label: "🔊 Replay", cls: "wide icon", on: () => { S.gen++; stopSpeak(); speakSeq([d.prompt], S.gen); } });
@@ -444,10 +503,10 @@ function onSubmit() {
 
 function markCorrect(d) {
   S.correct++;
-  el.verdict.textContent = "Correct ✓";
+  el.verdict.textContent = S.ecam ? "✓ Actioned" : "Correct ✓";
   el.verdict.className = "good";
   el.answerZone.hidden = true;
-  showReveal(d);
+  if (S.ecam) ecamMarkCurDone(); else showReveal(d);
   setControls([{ label: "Next ▶", cls: "primary wide", on: next }]);
   updateProgress();
   speakThen([d.correct_line], next);          // auto-advance after confirming
@@ -457,7 +516,7 @@ function revealForced(d) {
   el.verdict.textContent = "Missed — here's the answer.";
   el.verdict.className = "bad";
   el.answerZone.hidden = true;
-  showReveal(d);
+  maybeReveal(d);
   setControls([{ label: "Next ▶", cls: "primary wide", on: next }]);
   updateProgress();
   speakThen([d.reveal, d.explain].filter(Boolean), next);   // hear the answer, then advance
@@ -467,7 +526,7 @@ function revealSelfMark(d) {
   el.answerZone.hidden = true;
   el.verdict.textContent = "Did you say it right?";
   el.verdict.className = "";
-  showReveal(d);
+  maybeReveal(d);
   S.gen++; stopSpeak(); speakSeq([d.reveal], S.gen);
   setControls([
     { label: "I got it ✓", cls: "good", on: () => { S.correct++; next(); } },
@@ -481,14 +540,14 @@ function skip(d) {
   el.answerZone.hidden = true;
   el.verdict.textContent = "Skipped.";
   el.verdict.className = "bad";
-  showReveal(d);
+  maybeReveal(d);
   setControls([{ label: "Next ▶", cls: "primary wide", on: next }]);
   updateProgress();
   speakThen([d.reveal], next);
 }
 function explain(d) {
   if (S.listening) abortListen();
-  showReveal(d);
+  maybeReveal(d);
   const ex = d.explain || (d.why_full ? { t: d.why_full } : (d.why ? { t: d.why } : null));
   S.gen++; stopSpeak(); speakSeq([ex].filter(Boolean), S.gen);
 }
@@ -499,10 +558,10 @@ async function renderTeach(d, intro, gen) {
   el.cueKind.textContent = kind;
   el.cueItem.textContent = d.item;
   el.cueSub.textContent = "";
-  // teaching detail card
-  if (d.action || d.why || d.callout || d.why_full) {
+  // teaching detail card (ECAM mode shows it all in the panel instead)
+  if (!S.ecam && (d.action || d.why || d.callout || d.why_full)) {
     showReveal(d);
-  } else { hideReveal(); }
+  } else if (!S.ecam) { hideReveal(); }
   // what to say
   let lines;
   if (S.mode === "listen" && d.gradable) lines = [d.prompt, d.reveal, d.explain];
@@ -568,6 +627,7 @@ async function recallNext() {
   const gen = ++R.gen;
   const f = R.flows[R.idx];
   hideReveal();
+  el.ecam.hidden = true; el.cueCard.hidden = false;
   el.answerZone.hidden = true;
   el.progress.textContent = `${R.idx + 1}/${R.flows.length}`;
   el.subflowBar.textContent = `Memory item ${R.idx + 1} of ${R.flows.length}`;

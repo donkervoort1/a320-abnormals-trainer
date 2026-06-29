@@ -57,6 +57,30 @@ input{font-family:inherit}
 
 /* drill */
 #subflow-bar{color:var(--accent); font-size:13px; font-weight:700; text-transform:uppercase; letter-spacing:1px; min-height:18px; margin-bottom:14px}
+
+/* ECAM E/WD panel */
+#ecam{background:#05070a; border:1px solid #1c2a33; border-radius:12px; padding:16px 16px 14px;
+  margin-bottom:16px; font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace}
+#ecam-title{display:inline-block; font-size:19px; font-weight:800; letter-spacing:1px;
+  color:#ff3b30; border:2px solid #ff3b30; padding:3px 12px; border-radius:3px; margin-bottom:14px}
+#ecam-title.caution{color:var(--amber); border-color:var(--amber)}
+.ecam-line{display:flex; align-items:baseline; gap:6px; font-size:17px; line-height:2;
+  letter-spacing:.5px; white-space:nowrap}
+.ecl-label{color:#e8eef5}
+.ecl-dots{flex:1 1 auto; border-bottom:2px dotted #3a4654; transform:translateY(-5px); min-width:14px}
+.ecl-act{color:#36b6f0; font-weight:700}            /* blue = action to carry out */
+.ecam-line.cur{background:rgba(54,182,240,.10); border-radius:4px; padding:0 6px; margin:0 -6px}
+.ecam-line.cur .ecl-label{color:#fff}
+.ecam-line.cur::before{content:"▸ "; color:#36b6f0; font-weight:800; animation:pulse 1s ease-in-out infinite}
+.ecam-line.done .ecl-label{color:#34d399; opacity:.85}
+.ecam-line.done .ecl-act{color:#34d399}             /* green = done/normal */
+.ecam-line.done .ecl-dots{border-bottom-color:#1f5e47}
+.ecam-info{color:#e8eef5; font-size:16px; line-height:1.5; padding:6px 0;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+#ecam-caption{margin-top:14px; padding-top:12px; border-top:1px solid #1c2a33;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.ecl-call{color:var(--amber); font-weight:800; font-size:16px; letter-spacing:.5px}
+.ecl-why{color:var(--dim); font-size:14px; line-height:1.5; margin-top:6px}
 #cue-card{background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:26px 20px; text-align:center; margin-bottom:16px}
 #cue-kind{color:var(--dim); font-size:12px; text-transform:uppercase; letter-spacing:1.5px; margin-bottom:10px}
 #cue-item{font-size:27px; font-weight:800; line-height:1.25}
