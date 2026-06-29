@@ -11,6 +11,8 @@ const el = {
   subflowBar: $("subflow-bar"), cueCard: $("cue-card"), cueKind: $("cue-kind"), cueItem: $("cue-item"), cueSub: $("cue-sub"),
   ecam: $("ecam"), ecamTitle: $("ecam-title"), ecamLines: $("ecam-lines"), ecamCaption: $("ecam-caption"),
   cockpit: $("cockpit"), masterWarn: $("master-warn"),
+  cockpitBtn: $("cockpit-btn"), cockpitOverlay: $("cockpit-overlay"),
+  cockpitImg: $("cockpit-img"), cockpitCue: $("cockpit-cue"),
   answerZone: $("answer-zone"), answer: $("answer"), verdict: $("verdict"),
   revealCard: $("reveal-card"), revealAction: $("reveal-action"),
   revealCallout: $("reveal-callout"), revealWhy: $("reveal-why"), revealCite: $("reveal-cite"),
@@ -20,6 +22,12 @@ const el = {
 };
 
 let DATA = null;
+
+// cockpit.png exists only on the private deploy (gitignored on public). Probe it so
+// the 🛩 Cockpit button only appears where the poster is actually served.
+let COCKPIT_IMG = false;
+(function () { const im = new Image(); im.onload = () => { COCKPIT_IMG = true; }; im.src = "./cockpit.png"; })();
+let cockpitZoom = 1400;
 let MODE = "drill";
 const MAX_RETRIES = 1;
 
@@ -346,7 +354,8 @@ async function startDrill(key, seat, mode) {
   if (S.ecam) {                                      // ECAM: sound the chime + flash MASTER WARN
     try { Cockpit.resume(); if (ecamIsRed(ecamTitle(f))) Cockpit.crcStart(); else Cockpit.singleChime(); } catch (e) {}
     el.masterWarn.hidden = false; el.masterWarn.classList.add("active");
-  } else { el.masterWarn.hidden = true; el.masterWarn.classList.remove("active"); try { Cockpit.crcStop(); } catch (e) {} }
+    el.cockpitBtn.hidden = !COCKPIT_IMG;
+  } else { el.masterWarn.hidden = true; el.masterWarn.classList.remove("active"); el.cockpitBtn.hidden = true; try { Cockpit.crcStop(); } catch (e) {} }
   preloadFlow(f, seat);                              // background pre-buffer of all audio
   if (mode === "drill" && AUTO) await primeMic();   // one mic prompt up front, then hands-free
   showItem();
@@ -729,6 +738,17 @@ function bailToMenu() {
 el.btnMenu.addEventListener("click", bailToMenu);
 el.btnBack.addEventListener("click", bailToMenu);
 el.masterWarn.addEventListener("click", () => { try { Cockpit.crcStop(); } catch (e) {} el.masterWarn.classList.remove("active"); });
+function openCockpit() {
+  if (!COCKPIT_IMG) return;
+  const d = S.items && S.items[S.i];
+  el.cockpitCue.textContent = d ? ("Find: " + (d.callout || (d.item + " — " + d.action))) : "";
+  el.cockpitImg.style.width = cockpitZoom + "px";
+  el.cockpitOverlay.hidden = false;
+}
+el.cockpitBtn.addEventListener("click", openCockpit);
+$("cockpit-close").addEventListener("click", () => { el.cockpitOverlay.hidden = true; });
+$("cockpit-zoom-in").addEventListener("click", () => { cockpitZoom = Math.min(3600, cockpitZoom + 400); el.cockpitImg.style.width = cockpitZoom + "px"; });
+$("cockpit-zoom-out").addEventListener("click", () => { cockpitZoom = Math.max(700, cockpitZoom - 400); el.cockpitImg.style.width = cockpitZoom + "px"; });
 el.btnAgain.addEventListener("click", () => { if (replayFn) replayFn(); });
 const btnRecall = document.getElementById("btn-recall");
 if (btnRecall) btnRecall.addEventListener("click", startRecallExam);

@@ -44,6 +44,7 @@
   <section id="screen-drill" class="screen" hidden>
     <div id="topline">
       <div id="subflow-bar"></div>
+      <button id="cockpit-btn" hidden>🛩 Cockpit</button>
       <button id="master-warn" hidden>MASTER<br>WARN</button>
     </div>
 
@@ -88,6 +89,17 @@
       <button id="btn-back" class="ghost">Back to flows</button>
     </div>
   </section>
+
+  <!-- Cockpit poster overlay (private deploy only) -->
+  <div id="cockpit-overlay" hidden>
+    <div id="cockpit-bar">
+      <span id="cockpit-cue"></span>
+      <button id="cockpit-zoom-out">−</button>
+      <button id="cockpit-zoom-in">+</button>
+      <button id="cockpit-close">✕ Close</button>
+    </div>
+    <div id="cockpit-scroll"><img id="cockpit-img" src="./cockpit.png" alt="A320 panel" /></div>
+  </div>
 
   <script src="./matcher.js"></script>
   <script src="./config.js"></script>

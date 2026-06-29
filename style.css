@@ -58,6 +58,16 @@ input{font-family:inherit}
 /* drill */
 #topline{display:flex; align-items:flex-start; gap:12px; margin-bottom:14px}
 #subflow-bar{color:var(--accent); font-size:13px; font-weight:700; text-transform:uppercase; letter-spacing:1px; min-height:18px; flex:1}
+#cockpit-btn{background:var(--panel2); color:var(--accent); border:1px solid var(--line); border-radius:8px; font-weight:700; font-size:13px; padding:7px 11px}
+#cockpit-btn:active{background:var(--accent); color:#04121f}
+#cockpit-overlay{position:fixed; inset:0; z-index:50; background:#000; display:flex; flex-direction:column}
+#cockpit-bar{display:flex; align-items:center; gap:10px; padding:10px 14px; padding-top:calc(10px + env(safe-area-inset-top));
+  background:#0b0f14; border-bottom:1px solid var(--line)}
+#cockpit-cue{flex:1; color:var(--amber); font-weight:800; font-size:14px; letter-spacing:.4px}
+#cockpit-bar button{background:var(--panel2); color:var(--ink); border:1px solid var(--line); border-radius:8px; font-weight:800; font-size:15px; padding:8px 13px}
+#cockpit-bar #cockpit-close{background:var(--bad); color:#1a0408; border-color:transparent}
+#cockpit-scroll{flex:1; overflow:auto; -webkit-overflow-scrolling:touch; background:#1a1f26}
+#cockpit-img{display:block; width:1400px; max-width:none; height:auto}
 #master-warn{margin-left:auto; background:#7a0a0a; color:#fff; border:2px solid #ff3b30; border-radius:7px;
   font-weight:800; font-size:11px; line-height:1.05; text-align:center; padding:6px 8px; letter-spacing:.5px}
 #master-warn.active{animation:mwflash .5s steps(1) infinite}
