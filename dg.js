@@ -46,15 +46,20 @@
     const kt = (opts.keyterms || []).map(t => "keyterm=" + encodeURIComponent(t)).join("&");
     const qs = "model=nova-3&encoding=linear16&sample_rate=16000&channels=1"
       + "&interim_results=true&endpointing=300&smart_format=false&punctuate=false" + (kt ? "&" + kt : "");
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-    // stream through the Worker relay (master key added server-side)
-    const wsBase = proxy().replace(/^http/i, "ws");
+    // reuse an injected mic stream + AudioContext (hands-free loop) or make our own
+    let stream = opts.stream, ownStream = false;
+    if (!stream) {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      ownStream = true;
+    }
+    const wsBase = proxy().replace(/^http/i, "ws");   // stream through the Worker relay
     const ws = new WebSocket(wsBase + "/api/listen?" + qs);
     ws.binaryType = "arraybuffer";
     const AC = root.AudioContext || root.webkitAudioContext;
-    const ac = new AC();
-    try { await ac.resume(); } catch (e) {}
+    let ac = opts.audioContext, ownCtx = false;
+    if (!ac) { ac = new AC(); ownCtx = true; }
+    try { if (ac.state !== "running") await ac.resume(); } catch (e) {}
     const srcNode = ac.createMediaStreamSource(stream);
     const proc = ac.createScriptProcessor(4096, 1, 1);
     const inRate = ac.sampleRate;
@@ -64,8 +69,8 @@
       if (finished) return; finished = true;
       try { proc.disconnect(); } catch (e) {}
       try { srcNode.disconnect(); } catch (e) {}
-      try { stream.getTracks().forEach(t => t.stop()); } catch (e) {}
-      try { ac.close(); } catch (e) {}
+      if (ownStream) { try { stream.getTracks().forEach(t => t.stop()); } catch (e) {} }
+      if (ownCtx) { try { ac.close(); } catch (e) {} }
       try { if (ws.readyState === 1) ws.send(JSON.stringify({ type: "CloseStream" })); } catch (e) {}
       try { ws.close(); } catch (e) {}
       if (timer) clearTimeout(timer);

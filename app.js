@@ -31,6 +31,9 @@ let pickedVoice = null;
 // flow with no bundled audio) are allowed.
 const SILENT_WAV = "data:audio/wav;base64,UklGRiQCAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQACAAAA" + "A".repeat(682) + "==";
 let audioUnlocked = false;
+let audioCtx = null;          // shared AudioContext (resumed in-gesture, reused for STT)
+let micStream = null;         // shared mic stream for the whole drill (hands-free loop)
+const AUTO = true;            // auto-arm mic after each prompt + auto-advance after grading
 function unlockAudio() {
   if (audioUnlocked) return;
   audioUnlocked = true;
@@ -43,6 +46,24 @@ function unlockAudio() {
     else fin();
   } catch (e) { audioEl.muted = false; }
   try { if ("speechSynthesis" in window) { const u = new SpeechSynthesisUtterance(" "); u.volume = 0; speechSynthesis.speak(u); } } catch (e) {}
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (AC && !audioCtx) audioCtx = new AC();
+    if (audioCtx && audioCtx.state !== "running") audioCtx.resume();
+  } catch (e) {}
+}
+async function primeMic() {
+  // grab mic permission + a reusable stream during the start gesture, so the
+  // mic can auto-arm on each item without a fresh prompt.
+  if (!DG.hasProxy() || micStream) return;
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+  } catch (e) { micStream = null; }   // denied -> manual 🎤 button still works
+}
+function stopMic() {
+  try { if (micStream) micStream.getTracks().forEach(t => t.stop()); } catch (e) {}
+  micStream = null;
 }
 function loadVoices() {
   if (!("speechSynthesis" in window)) return;
@@ -127,21 +148,26 @@ function startListen(d) {
 }
 
 async function dgListen(d) {
+  const myGen = ++S.listenGen;
   S.listening = true; S.recCtl = null;
   el.verdict.textContent = "🎤 Listening… say the action (tap 🎤 to stop)";
   el.verdict.className = "listening";
   try {
     const txt = await DG.listen({
       keyterms: KEYTERMS,
-      onPartial: (t) => { el.answer.value = t; },
+      stream: micStream || undefined,
+      audioContext: audioCtx || undefined,
+      onPartial: (t) => { if (myGen === S.listenGen) el.answer.value = t; },
       register: (c) => { S.recCtl = c; },
       maxMs: 9000,
     });
+    if (myGen !== S.listenGen) return;          // superseded (moved on / manual action)
     S.listening = false; S.recCtl = null;
-    if (!txt) { el.verdict.textContent = "Didn't catch that — tap 🎤 again, or type."; el.verdict.className = "bad"; return; }
+    if (!txt) { el.verdict.textContent = "Didn't catch that — tap 🎤 to retry, or type."; el.verdict.className = "bad"; return; }
     el.answer.value = txt;
     onSubmit();
   } catch (e) {
+    if (myGen !== S.listenGen) return;
     S.listening = false; S.recCtl = null;
     el.verdict.textContent = /denied|notallowed|permission/i.test(String(e))
       ? "Mic blocked — allow the microphone for this site in Safari, then tap 🎤."
@@ -191,7 +217,18 @@ function webSpeechListen(d) {
 let S = {};
 function resetState() {
   S = { flow: null, seat: "pf", mode: "drill", items: [], i: 0, attempts: 0,
-        correct: 0, total: 0, missed: [], curSub: null, gen: 0, pendingIntro: [] };
+        correct: 0, total: 0, missed: [], curSub: null, gen: 0, pendingIntro: [],
+        listening: false, recCtl: null, listenGen: 0 };
+}
+function abortListen() {
+  S.listenGen = (S.listenGen || 0) + 1;   // invalidate any pending recognizer result
+  if (S.recCtl) { try { S.recCtl.stop(); } catch (e) {} S.recCtl = null; }
+  S.listening = false;
+}
+async function speakThen(lines, andThen) {
+  S.gen++; const gen = S.gen; stopSpeak();
+  await speakSeq((lines || []).filter(Boolean), gen);
+  if (AUTO && andThen && gen === S.gen) andThen();
 }
 
 // ---- menu ---------------------------------------------------------------
@@ -228,7 +265,7 @@ function renderMenu() {
 }
 
 // ---- drill --------------------------------------------------------------
-function startDrill(key, seat, mode) {
+async function startDrill(key, seat, mode) {
   const f = DATA.flows.find(x => x.key === key);
   if (!f || !f.seats[seat]) return;
   unlockAudio();
@@ -238,6 +275,7 @@ function startDrill(key, seat, mode) {
   S.total = f.seats[seat].gradable;
   S.pendingIntro = f.sop_intro ? [f.sop_intro] : [];
   show("drill");
+  if (mode === "drill" && AUTO) await primeMic();   // one mic prompt up front, then hands-free
   showItem();
 }
 
@@ -284,6 +322,7 @@ function introLinesFor(d) {
 }
 
 function showItem() {
+  abortListen();
   if (S.i >= S.items.length) return finish();
   const d = S.items[S.i];
   S.attempts = 0;
@@ -301,7 +340,7 @@ function showItem() {
   else renderTeach(d, intro, gen);
 }
 
-function renderAsk(d, intro, gen) {
+async function renderAsk(d, intro, gen) {
   el.answerZone.hidden = false;
   const v = voiceInAvail();
   el.cueKind.textContent = v
@@ -317,10 +356,13 @@ function renderAsk(d, intro, gen) {
   ctrls.push({ label: "Explain", cls: "icon", on: () => explain(d) });
   ctrls.push({ label: "🔊 Replay", cls: "wide icon", on: () => { S.gen++; stopSpeak(); speakSeq([d.prompt], S.gen); } });
   setControls(ctrls);
-  speakSeq([...intro, d.prompt], gen);
+  await speakSeq([...intro, d.prompt], gen);
+  // hands-free: arm the mic once the item has been read (and nothing superseded it)
+  if (AUTO && gen === S.gen && DG.hasProxy() && micStream) startListen(d);
 }
 
 function onSubmit() {
+  if (S.listening) abortListen();   // manual "Submit typed" mid-listen
   const d = S.items[S.i];
   const ans = el.answer.value.trim();
   if (!ans) { el.answer.focus(); return; }
@@ -330,7 +372,8 @@ function onSubmit() {
   if (S.attempts > MAX_RETRIES) return revealForced(d);
   el.verdict.textContent = "Not quite — try again, or Reveal.";
   el.verdict.className = "bad";
-  el.answer.select();
+  if (AUTO && DG.hasProxy() && micStream) startListen(d);   // hands-free retry
+  else el.answer.select();
 }
 
 function markCorrect(d) {
@@ -339,9 +382,9 @@ function markCorrect(d) {
   el.verdict.className = "good";
   el.answerZone.hidden = true;
   showReveal(d);
-  S.gen++; stopSpeak(); speakSeq([d.correct_line], S.gen);
   setControls([{ label: "Next ▶", cls: "primary wide", on: next }]);
   updateProgress();
+  speakThen([d.correct_line], next);          // auto-advance after confirming
 }
 function revealForced(d) {
   S.missed.push(d.item);
@@ -349,11 +392,12 @@ function revealForced(d) {
   el.verdict.className = "bad";
   el.answerZone.hidden = true;
   showReveal(d);
-  S.gen++; stopSpeak(); speakSeq([d.reveal, d.explain].filter(Boolean), S.gen);
   setControls([{ label: "Next ▶", cls: "primary wide", on: next }]);
   updateProgress();
+  speakThen([d.reveal, d.explain].filter(Boolean), next);   // hear the answer, then advance
 }
 function revealSelfMark(d) {
+  if (S.listening) abortListen();
   el.answerZone.hidden = true;
   el.verdict.textContent = "Did you say it right?";
   el.verdict.className = "";
@@ -366,22 +410,24 @@ function revealSelfMark(d) {
   updateProgress();
 }
 function skip(d) {
+  if (S.listening) abortListen();
   S.missed.push(d.item);
   el.answerZone.hidden = true;
   el.verdict.textContent = "Skipped.";
   el.verdict.className = "bad";
   showReveal(d);
-  S.gen++; stopSpeak(); speakSeq([d.reveal], S.gen);
   setControls([{ label: "Next ▶", cls: "primary wide", on: next }]);
   updateProgress();
+  speakThen([d.reveal], next);
 }
 function explain(d) {
+  if (S.listening) abortListen();
   showReveal(d);
   const ex = d.explain || (d.why_full ? { t: d.why_full } : (d.why ? { t: d.why } : null));
   S.gen++; stopSpeak(); speakSeq([ex].filter(Boolean), S.gen);
 }
 
-function renderTeach(d, intro, gen) {
+async function renderTeach(d, intro, gen) {
   el.answerZone.hidden = true;
   const kind = d.brief ? "Briefing" : (d.gradable ? "Review" : (d.callout ? "Callout" : "Note"));
   el.cueKind.textContent = kind;
@@ -401,12 +447,15 @@ function renderTeach(d, intro, gen) {
     { label: "Next ▶", cls: "primary wide", on: next },
     { label: "🔊 Replay", cls: "wide icon", on: () => { S.gen++; stopSpeak(); speakSeq(lines.filter(Boolean), S.gen); } },
   ]);
-  speakSeq([...intro, ...lines.filter(Boolean)], gen);
+  await speakSeq([...intro, ...lines.filter(Boolean)], gen);
+  if (AUTO && gen === S.gen) next();          // hands-free: advance after narration
 }
 
 function next() { S.i++; showItem(); }
 
 function finish() {
+  abortListen();
+  stopMic();
   stopSpeak();
   show("done");
   if (S.mode === "listen" || !S.total) {
@@ -428,8 +477,8 @@ function finish() {
 
 // ---- wiring -------------------------------------------------------------
 el.answer.addEventListener("keydown", (e) => { if (e.key === "Enter") onSubmit(); });
-el.btnMenu.addEventListener("click", () => { stopSpeak(); show("menu"); });
-el.btnBack.addEventListener("click", () => { stopSpeak(); show("menu"); });
+el.btnMenu.addEventListener("click", () => { abortListen(); stopMic(); stopSpeak(); show("menu"); });
+el.btnBack.addEventListener("click", () => { abortListen(); stopMic(); stopSpeak(); show("menu"); });
 el.btnAgain.addEventListener("click", () => startDrill(S.flow.key, S.seat, S.mode));
 el.modeToggle.querySelectorAll("button").forEach(b => {
   b.addEventListener("click", () => {
