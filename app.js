@@ -72,6 +72,47 @@ async function speakSeq(list, gen) {
   }
 }
 
+// ---- speech recognition (iOS Safari Web Speech API; free, no key) -------
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const micAvail = !!SR;
+let recognizer = null;
+function startListen(d) {
+  if (!SR) { onSubmit(); return; }
+  if (S.listening) return;
+  stopSpeak();                       // free the mic from any TTS playback
+  let rec;
+  try { rec = new SR(); } catch (e) { el.verdict.textContent = "Mic unavailable — type instead."; el.verdict.className = "bad"; return; }
+  recognizer = rec;
+  rec.lang = "en-US";
+  rec.continuous = false;
+  rec.interimResults = false;
+  rec.maxAlternatives = 5;
+  S.listening = true;
+  el.verdict.textContent = "🎤 Listening… say the action";
+  el.verdict.className = "listening";
+  rec.onresult = (e) => {
+    S.listening = false;
+    let alts = [];
+    try { const r = e.results[0]; for (let k = 0; k < r.length; k++) alts.push(r[k].transcript || ""); } catch (_) {}
+    const top = alts[0] || "";
+    el.answer.value = top;
+    // accept if ANY alternative the recognizer offered matches (STT leniency)
+    let hit = alts.find(a => a && Matcher.matchAnswer(a, d.action).ok);
+    if (hit) { el.answer.value = hit; markCorrect(d); }
+    else { onSubmit(); }             // grade top transcript -> retry/reveal path
+  };
+  rec.onerror = (e) => {
+    S.listening = false;
+    el.verdict.textContent = (e && e.error === "not-allowed")
+      ? "Mic blocked — allow microphone in Safari settings, or type."
+      : "Didn't catch that — tap 🎤 again, or type.";
+    el.verdict.className = "bad";
+  };
+  rec.onend = () => { S.listening = false; };
+  try { rec.start(); }
+  catch (e) { S.listening = false; el.verdict.textContent = "Couldn't start mic — type instead."; el.verdict.className = "bad"; }
+}
+
 // ---- state --------------------------------------------------------------
 let S = {};
 function resetState() {
@@ -187,17 +228,19 @@ function showItem() {
 
 function renderAsk(d, intro, gen) {
   el.answerZone.hidden = false;
-  el.cueKind.textContent = "Your call — say it, then type";
+  el.cueKind.textContent = micAvail
+    ? "Your call — tap 🎤 and say the action (or type)"
+    : "Your call — say it aloud, then type";
   el.cueItem.textContent = d.item;
   el.cueSub.textContent = "";
-  setControls([
-    { label: "Submit", cls: "primary wide", on: onSubmit },
-    { label: "Reveal", on: () => revealSelfMark(d) },
-    { label: "Skip", on: () => skip(d) },
-    { label: "🔊 Replay", cls: "wide icon", on: () => { S.gen++; stopSpeak(); speakSeq([d.prompt], S.gen); } },
-    { label: "Explain", cls: "wide icon", on: () => explain(d) },
-  ]);
-  el.answer.focus();
+  const ctrls = [];
+  if (micAvail) ctrls.push({ label: "🎤 Speak answer", cls: "primary wide", on: () => startListen(d) });
+  ctrls.push({ label: micAvail ? "Submit typed" : "Submit", cls: micAvail ? "" : "primary wide", on: onSubmit });
+  ctrls.push({ label: "Reveal", on: () => revealSelfMark(d) });
+  ctrls.push({ label: "Skip", on: () => skip(d) });
+  ctrls.push({ label: "Explain", cls: "icon", on: () => explain(d) });
+  ctrls.push({ label: "🔊 Replay", cls: "wide icon", on: () => { S.gen++; stopSpeak(); speakSeq([d.prompt], S.gen); } });
+  setControls(ctrls);
   speakSeq([...intro, d.prompt], gen);
 }
 
@@ -317,7 +360,7 @@ el.modeToggle.querySelectorAll("button").forEach(b => {
     MODE = b.dataset.mode;
     el.modeToggle.querySelectorAll("button").forEach(x => x.classList.toggle("active", x === b));
     el.modeHint.textContent = MODE === "drill"
-      ? "Drill: I say the item, you say the action out loud, then type it (or tap Reveal) to grade."
+      ? "Drill: I say the item; tap 🎤 to speak your answer (or type it), and it grades you."
       : "Listen: I read every item, the action and the why straight through — nothing to answer.";
   });
 });
