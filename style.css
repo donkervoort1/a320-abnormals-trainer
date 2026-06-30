@@ -4,6 +4,7 @@
   --amber:#fbbf24; --radius:16px;
 }
 *{box-sizing:border-box}
+[hidden]{display:none !important}   /* make the hidden attribute authoritative over display:flex etc. */
 html,body{margin:0;padding:0;height:100%}
 body{
   background:var(--bg); color:var(--ink);
