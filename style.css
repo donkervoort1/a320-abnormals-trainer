@@ -73,6 +73,15 @@ input{font-family:inherit}
 #master-warn.active{animation:mwflash .5s steps(1) infinite}
 @keyframes mwflash{0%{background:#ff3b30;color:#1a0000}50%{background:#3a0505;color:#ff9a93}}
 
+/* real panel section (Read-ECAM style) */
+.panel-crop{width:100%; border:1px solid var(--line); border-radius:12px; overflow:hidden; background:#0b0f14}
+.panel-crop.done{outline:3px solid var(--good); outline-offset:-3px}
+.panel-crop img{display:block; width:100%; max-height:38vh; object-fit:contain; cursor:pointer; background:#0b0f14}
+.panel-cap{display:flex; align-items:center; gap:8px; padding:9px 12px; background:#0b0f14; border-top:1px solid var(--line)}
+.panel-cap .pc-act{color:var(--good); font-weight:800; font-size:15px}
+.panel-cap .pc-call{color:var(--amber); font-weight:700; font-size:13px}
+.panel-cap .tap-hint{margin-left:auto; color:var(--accent); font-weight:700; font-size:12px; animation:pulse 1s infinite}
+
 /* cockpit controls */
 #cockpit{display:flex; flex-wrap:wrap; gap:12px; justify-content:center; margin-bottom:14px}
 .ctl{background:#11161d; border:1px solid #283341; border-radius:12px; padding:12px 14px; min-width:128px; text-align:center}

@@ -28,6 +28,19 @@ let DATA = null;
 let COCKPIT_IMG = false;
 (function () { const im = new Image(); im.onload = () => { COCKPIT_IMG = true; }; im.src = "./cockpit.png"; })();
 let cockpitZoom = 1400;
+
+// Panel-section crops (private deploy only) — show the real panel for each ECAM step.
+let PANELS_AVAIL = false;
+(function () { const im = new Image(); im.onload = () => { PANELS_AVAIL = true; }; im.src = "./panels/firepb.png"; })();
+function panelCropFor(item, action) {
+  const t = ((item || "") + " " + (action || "")).toLowerCase();
+  if (/fire\s*(p\/?b|pushbutton|push\s*button|button)/.test(t) || (/fire/.test(t) && /push/.test(t))) return "firepb";
+  if (/agent/.test(t)) return "agent";
+  if (/master/.test(t)) return "engmaster";
+  if (/thrust lever|thr lever|throttle/.test(t)) return "thrust";
+  if (/park/.test(t) && /brake|brk/.test(t)) return "parkbrk";
+  return null;
+}
 let MODE = "drill";
 const MAX_RETRIES = 1;
 
@@ -456,6 +469,23 @@ function ecamMarkCurDone() {
 }
 function maybeReveal(d) { if (!S.ecam) showReveal(d); }   // ECAM shows everything in the panel
 
+// Real panel-section for an ECAM step (Read-ECAM style): show the cut, tap to action.
+function buildPanelCrop(crop, d, onDone) {
+  const wrap = document.createElement("div");
+  wrap.className = "panel-crop";
+  const img = document.createElement("img");
+  img.src = "./panels/" + crop + ".png";
+  img.alt = d.item || "";
+  img.addEventListener("click", () => { wrap.classList.add("done"); onDone(); });
+  const cap = document.createElement("div");
+  cap.className = "panel-cap";
+  cap.innerHTML = `<span class="pc-act">${(d.action || "").toUpperCase()}</span>`
+    + (d.callout ? `<span class="pc-call"> · ${d.callout}</span>` : "")
+    + `<span class="tap-hint">tap the panel ▸</span>`;
+  wrap.appendChild(img); wrap.appendChild(cap);
+  return wrap;
+}
+
 function showItem() {
   abortListen();
   if (S.i >= S.items.length) return finish();
@@ -496,16 +526,21 @@ async function renderAsk(d, intro, gen) {
   ctrls.push({ label: "Explain", cls: "icon", on: () => explain(d) });
   ctrls.push({ label: "🔊 Replay", cls: "wide icon", on: () => { S.gen++; stopSpeak(); speakSeq([d.prompt], S.gen); } });
   setControls(ctrls);
-  if (S.ecam) {                                      // contextual switch for this ECAM step
+  if (S.ecam) {                                      // real panel section for this ECAM step
     el.cockpit.hidden = false; el.cockpit.innerHTML = "";
-    try {
-      el.cockpit.appendChild(Cockpit.controlFor(d.item, d.action, () => {
-        if (S.listening) abortListen();
-        try { Cockpit.crcStop(); } catch (e) {}
-        el.masterWarn.classList.remove("active");
-        markCorrect(d);
-      }));
-    } catch (e) { el.cockpit.hidden = true; }
+    const actioned = () => {
+      if (S.listening) abortListen();
+      try { Cockpit.crcStop(); } catch (e) {}
+      el.masterWarn.classList.remove("active");
+      markCorrect(d);
+    };
+    const crop = PANELS_AVAIL ? panelCropFor(d.item, d.action) : null;
+    if (crop) {
+      el.cockpit.appendChild(buildPanelCrop(crop, d, actioned));
+    } else {
+      try { el.cockpit.appendChild(Cockpit.controlFor(d.item, d.action, actioned)); }
+      catch (e) { el.cockpit.hidden = true; }
+    }
   } else { el.cockpit.hidden = true; el.cockpit.innerHTML = ""; }
   await speakSeq([...intro, d.prompt], gen);
   // hands-free: arm the mic once the item has been read (and nothing superseded it)
